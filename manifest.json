@@ -1,0 +1,46 @@
+{
+  "id": "example-plugin",
+  "name": "Example Plugin",
+  "version": "1.0.0",
+  "description": "A simple example plugin for Home Screens",
+  "author": "your-github-username",
+  "license": "MIT",
+  "minAppVersion": "0.16.0",
+  "moduleType": "example-plugin",
+  "category": "Knowledge & Fun",
+  "icon": "Puzzle",
+  "defaultConfig": {
+    "message": "Hello from a plugin!",
+    "showBorder": true,
+    "refreshIntervalMs": 60000
+  },
+  "defaultSize": { "w": 400, "h": 200 },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Display Message",
+        "ui:widget": "text"
+      },
+      "showBorder": {
+        "type": "boolean",
+        "title": "Show Border",
+        "ui:widget": "toggle"
+      },
+      "refreshIntervalMs": {
+        "type": "number",
+        "title": "Refresh Interval (ms)",
+        "minimum": 5000,
+        "maximum": 300000,
+        "ui:widget": "slider",
+        "ui:step": 5000
+      }
+    }
+  },
+  "exports": {
+    "component": "default"
+  },
+  "dataRequirements": [],
+  "prefetchUrl": null
+}
