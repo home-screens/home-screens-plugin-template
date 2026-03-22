@@ -5,28 +5,56 @@
   "description": "A simple example plugin for Home Screens",
   "author": "your-github-username",
   "license": "MIT",
-  "minAppVersion": "0.16.0",
+  "minAppVersion": "0.20.0",
   "moduleType": "example-plugin",
   "category": "Knowledge & Fun",
   "icon": "Puzzle",
+
   "defaultConfig": {
     "message": "Hello from a plugin!",
     "showBorder": true,
-    "refreshIntervalMs": 60000
+    "borderColor": "#3b82f6",
+    "refreshIntervalMs": 60000,
+    "notes": ""
   },
+
   "defaultSize": { "w": 400, "h": 200 },
+
+  "defaultStyle": {
+    "padding": 16,
+    "backgroundColor": "rgba(0, 0, 0, 0.4)"
+  },
+
   "configSchema": {
     "type": "object",
     "properties": {
       "message": {
         "type": "string",
         "title": "Display Message",
-        "ui:widget": "text"
+        "description": "The main text shown in the center of the plugin",
+        "ui:widget": "text",
+        "ui:placeholder": "Enter your message...",
+        "ui:group": "Content"
+      },
+      "notes": {
+        "type": "string",
+        "title": "Notes",
+        "description": "Optional multi-line notes displayed below the message",
+        "ui:widget": "textarea",
+        "ui:group": "Content"
       },
       "showBorder": {
         "type": "boolean",
         "title": "Show Border",
-        "ui:widget": "toggle"
+        "ui:widget": "toggle",
+        "ui:group": "Appearance"
+      },
+      "borderColor": {
+        "type": "string",
+        "title": "Border Color",
+        "ui:widget": "color",
+        "ui:group": "Appearance",
+        "ui:showWhen": { "field": "showBorder", "equals": true }
       },
       "refreshIntervalMs": {
         "type": "number",
@@ -34,13 +62,17 @@
         "minimum": 5000,
         "maximum": 300000,
         "ui:widget": "slider",
-        "ui:step": 5000
+        "ui:step": 5000,
+        "ui:group": "Timing"
       }
     }
   },
+
   "exports": {
     "component": "default"
   },
+
   "dataRequirements": [],
-  "prefetchUrl": null
+  "prefetchUrl": null,
+  "permissions": []
 }

@@ -3,15 +3,16 @@
  * These are the props injected by the host into your display component.
  */
 
-/** Style properties applied to every module */
+/** Style properties applied to every module — matches the host's ModuleStyle */
 export interface ModuleStyle {
   fontSize: number;
   fontFamily: string;
-  color: string;
+  textColor: string;
   backgroundColor: string;
   borderRadius: number;
   padding: number;
   opacity: number;
+  backdropBlur: number;
 }
 
 /** Base props every plugin display component receives */
@@ -40,3 +41,6 @@ export interface PluginConfigSectionProps {
   moduleId: string;
   screenId: string;
 }
+
+/** Declared plugin capabilities — transparency for users, not runtime-enforced */
+export type PluginPermission = 'network' | 'secrets' | 'events' | 'storage';
