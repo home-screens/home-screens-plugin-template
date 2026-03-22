@@ -88,6 +88,8 @@ my-plugin/
 | `exports` | `object` | Map of named exports. `{ "component": "default" }` is required. |
 | `dataRequirements` | `string[]` | Data the host should inject: `"location"`, `"weather"`, `"calendar"`. |
 | `prefetchUrl` | `string \| null` | Optional API URL the host fetches and passes as `prefetchData`. |
+| `permissions` | `string[]` | Capability declarations: `"network"`, `"secrets"`, `"events"`, `"storage"`. |
+| `configMigrations` | `object` | Maps `fromVersion` to `{ renames, defaults }` for config schema changes. |
 
 ### Categories
 
@@ -200,6 +202,77 @@ The `onChange` callback accepts a partial config object that gets merged with th
 
 Use `window.__HS_SDK__.INPUT_CLASS` and `NESTED_INPUT_CLASS` for inputs so they match the host app's styling.
 
+## Development
+
+The Plugin Store has a **Developer** tab for loading plugins directly from a local dev server, which is faster than copying files manually.
+
+### Dev Mode Loading
+
+1. Start your plugin's dev server:
+   ```bash
+   npm run dev
+   ```
+
+2. In the Home Screens editor, open the Plugin Store and go to the **Developer** tab.
+
+3. Enter your dev server URL (e.g. `http://localhost:5173`) and click **Load**.
+
+The plugin will:
+- Load immediately from your dev server
+- Auto-reload every 2 seconds when the bundle changes (via ETag/Content-Length polling)
+- Show a **Dev** badge in the editor palette
+- Be stored in `localStorage` only — it won't persist across browsers or affect other users
+
+### Source Maps
+
+Source maps are enabled by default in this template's `vite.config.ts` (`sourcemap: true`). When loading via dev mode, browser DevTools will pick up the source maps automatically for debugging.
+
+## Permissions
+
+Plugins can declare which capabilities they use. These are **transparency declarations** — they are shown to users during install but not enforced at runtime.
+
+Add a `permissions` array to your `manifest.json`:
+
+```json
+{
+  "permissions": ["network", "secrets"]
+}
+```
+
+| Permission | Meaning |
+|---|---|
+| `network` | Makes HTTP requests via the server-side proxy (`pluginFetch`) |
+| `secrets` | Stores API keys or credentials |
+| `events` | Emits host events (navigate, refresh, etc.) |
+| `storage` | Uses localStorage for persistent state |
+
+Permissions are shown in the install confirmation dialog. Plugins submitted to the registry must honestly declare all capabilities they use — undeclared capabilities will be flagged during review.
+
+## Config Migration
+
+When you release a new version with config schema changes, existing module instances keep their old config. The host handles this automatically:
+
+### Automatic Deep-Merge
+
+On version change, the host deep-merges each module's existing config with your new `defaultConfig`. New fields get default values; existing fields are preserved. This handles the most common case (adding new config fields) with zero effort.
+
+### Explicit Migrations
+
+For breaking changes (renames, removed fields), add a `configMigrations` field to your manifest:
+
+```json
+{
+  "configMigrations": {
+    "1.0.0": {
+      "renames": { "oldFieldName": "newFieldName" },
+      "defaults": { "newRequiredField": 42 }
+    }
+  }
+}
+```
+
+Each key is a `fromVersion` — when upgrading from that version, the renames and defaults are applied before the deep-merge. This lets you handle field renames and explicit default values for fields that shouldn't use `defaultConfig` values.
+
 ## Building
 
 ```bash
@@ -216,8 +289,42 @@ The build produces a single `dist/bundle.js` file as an IIFE that assigns export
 
 1. Create a GitHub repository for your plugin.
 2. Tag a release with a semver version (e.g. `v1.0.0`).
-3. Attach a tarball containing `manifest.json` and `dist/bundle.js` to the release.
+3. Create a release tarball and attach it to the GitHub release.
 4. Submit a PR to the [home-screens-plugins](https://github.com/home-screens/home-screens-plugins) registry to list your plugin in the plugin store.
+
+### Creating the Release Tarball
+
+The tarball **must** contain a single top-level directory wrapping `manifest.json` and `dist/`. The install flow extracts with `tar --strip-components=1`, so files at the root of the archive will be lost.
+
+```bash
+# Build first
+npm run build
+
+# Create a staging directory with the required structure
+mkdir -p /tmp/my-plugin-pkg/my-plugin/dist
+cp manifest.json /tmp/my-plugin-pkg/my-plugin/
+cp dist/bundle.js /tmp/my-plugin-pkg/my-plugin/dist/
+cp dist/bundle.js.map /tmp/my-plugin-pkg/my-plugin/dist/  # optional
+
+# Create the tarball
+tar -czf plugin.tar.gz -C /tmp/my-plugin-pkg my-plugin
+
+# Compute the SHA-256 hash (needed for the registry entry)
+shasum -a 256 plugin.tar.gz    # macOS
+sha256sum plugin.tar.gz        # Linux
+```
+
+The resulting archive should look like this:
+
+```
+my-plugin/
+  manifest.json
+  dist/
+    bundle.js
+    bundle.js.map
+```
+
+Attach `plugin.tar.gz` to your GitHub release, then use the download URL and SHA-256 hash in your registry PR.
 
 ## Available Icons
 
