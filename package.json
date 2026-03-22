@@ -4,7 +4,7 @@
   "description": "Home Screens plugin template — clone this to build your own plugin",
   "license": "MIT",
   "scripts": {
-    "dev": "vite build --watch",
+    "dev": "vite build && (vite build --watch & npx -y serve@latest . -l 5173 --cors --no-clipboard)",
     "build": "vite build"
   },
   "devDependencies": {
