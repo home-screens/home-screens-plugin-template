@@ -18,6 +18,10 @@ export default defineConfig({
     rollupOptions: {
       external: ['react', 'react-dom'],
       output: {
+        // 'named' ensures the IIFE always produces an object ({ default: ... })
+        // rather than assigning a bare value when there is only a default export.
+        // The plugin loader reads window.__HS_PLUGIN__['default'].
+        exports: 'named',
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
