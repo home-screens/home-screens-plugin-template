@@ -1,6 +1,6 @@
 # Home Screens Plugin Template
 
-Starter template for building plugins for [Home Screens](https://github.com/home-screens/home-screens), a smart display system that runs on Raspberry Pi.
+Starter template for building plugins for [Home Screens](https://homescreens.dev) — the open-source smart display system for Raspberry Pi. ([Source code on GitHub](https://github.com/home-screens/home-screens))
 
 Plugins are IIFE bundles loaded at runtime. The host app provides React and ReactDOM as globals, so your bundle stays small and fast.
 
