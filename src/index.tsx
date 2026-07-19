@@ -150,3 +150,48 @@ export default function ExamplePlugin({ config, style }: PluginComponentProps) {
 //
 //   return [data, error] as const;
 // }
+
+// ─── Example: Shared-State Provider ──────────────────────────────────────────
+//
+// Publishes state onto the shared-state bus so native modules and other
+// plugins can gate visibility / render Text-module tokens on it, with no
+// visible or backgroundProvider module instance required. Add to manifest
+// exports to use it:
+//
+//   "exports": { "component": "default", "stateProvider": "StateProvider" }
+//
+// import type { StateProviderProps } from './hs-plugin';
+//
+// const PLUGIN_ID = 'my-plugin';
+//
+// export function StateProvider({ demandedKeys, settings }: StateProviderProps) {
+//   const previousKeysRef = React.useRef<string[]>([]);
+//
+//   React.useEffect(() => {
+//     // IDLE WHEN EMPTY: do not poll or open a connection until something
+//     // actually references one of this plugin's keys.
+//     if (demandedKeys.length === 0) return;
+//
+//     let cancelled = false;
+//     async function poll() {
+//       for (const key of demandedKeys) {
+//         const value = await resolveValue(key, settings); // your own lookup
+//         if (!cancelled && value != null) window.__HS_SDK__?.publishState?.(PLUGIN_ID, key, String(value));
+//       }
+//     }
+//     poll();
+//     const id = setInterval(poll, 30000);
+//     return () => { cancelled = true; clearInterval(id); };
+//   }, [demandedKeys, settings]);
+//
+//   // CLEAR ON SHRINK: a key that stops being demanded (the user deleted or
+//   // re-pointed the condition/token referencing it) must be cleared, or
+//   // conditions elsewhere keep reading its last value forever.
+//   React.useEffect(() => {
+//     const removed = previousKeysRef.current.filter((k) => !demandedKeys.includes(k));
+//     removed.forEach((key) => window.__HS_SDK__?.clearState?.(PLUGIN_ID, key));
+//     previousKeysRef.current = demandedKeys;
+//   }, [demandedKeys]);
+//
+//   return null;
+// }

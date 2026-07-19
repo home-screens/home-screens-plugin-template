@@ -30,7 +30,7 @@ my-plugin/
   src/
     index.tsx          Your display component (default export)
     hs-sdk.d.ts        Type stubs for host globals (full SDK surface)
-    hs-plugin.d.ts     Type definitions for plugin props
+    hs-plugin.d.ts     Type definitions for plugin props & optional export contracts
   vite.config.ts       IIFE build configuration (classic JSX transform)
   dist/
     bundle.js          Built output (git-ignored)
@@ -54,13 +54,19 @@ my-plugin/
 | `defaultSize` | `{ w, h }` | Default width and height in pixels on the 1080x1920 canvas. |
 | `defaultStyle` | `object` | Optional partial style overrides (e.g. `{ "padding": 0 }`). Merged with the default module style. |
 | `configSchema` | `object` | JSON Schema describing your config fields with UI hints. |
-| `exports` | `object` | Map of named exports. `{ "component": "default" }` is required. Optionally add `"configSection": "ConfigSection"`. |
+| `settingsSchema` | `object` | JSON Schema (same shape as `configSchema`) for plugin-level settings — one value shared by every instance, edited in the plugin manager instead of a module's property panel. See [Shared State](#shared-state). |
+| `exports` | `object` | Map of named exports. `{ "component": "default" }` is required. Optionally add `"configSection": "ConfigSection"` and/or `"stateProvider": "StateProvider"`. |
 | `dataRequirements` | `string[]` | Data the host should inject: `"location"`, `"weather"`, `"calendar"`. |
 | `prefetchUrl` | `string \| null` | Optional API URL the host prefetches for the plugin. |
-| `permissions` | `string[]` | Capability declarations: `"network"`, `"secrets"`, `"events"`, `"storage"`. |
+| `permissions` | `string[]` | Capability declarations: `"network"`, `"secrets"`, `"events"`, `"storage"`, `"oauth"` are transparency-only (shown to users, not enforced). `"localNetwork"` is the exception — it's runtime-enforced, see the table below. |
 | `secrets` | `array` | API key declarations for the server-side proxy (see Secrets section). |
 | `allowedDomains` | `string[]` | Upstream domains the proxy is allowed to reach (e.g. `["api.example.com"]`). |
 | `configMigrations` | `object` | Maps version keys to `{ renames, defaults }` for config schema changes. |
+| `providesState` | `array` | Static list of `{ key, label, sampleValues? }` shared-state keys this plugin can publish, so the editor's condition picker can offer them before anything is published. See [Shared State](#shared-state). |
+| `auth` | `object` | Declares a server-side auth adapter (OAuth2 or Garmin SSO) the host runs on your behalf. See [Auth Adapters](#auth-adapters). |
+| `translations` | `object` | Maps BCP-47 locale tags to dictionary file paths (e.g. `{ "de-DE": "translations/de-DE.json" }`), relative to the plugin root. See [Internationalization](#internationalization). |
+
+Bump `minAppVersion` to the host version that introduced whatever new export or field you start using (e.g. `stateProvider` needs a host new enough to mount it). At **install time** there's no feature-detection fallback — older hosts reject the tarball outright rather than partially supporting it. That's separate from **runtime**: guard every optional `__HS_SDK__` member with `?.` regardless (see [SDK Reference](#sdk-reference)) — the bundle can execute before the host has finished populating the global, in tests, and in standalone bundle previews, independent of which host version is actually running.
 
 ### Categories
 
@@ -172,6 +178,8 @@ interface PluginComponentProps {
 
 The host exposes `window.__HS_SDK__` with UI components, hooks, and utilities. Full type declarations are in `src/hs-sdk.d.ts`.
 
+**Guard every call with `?.`.** `__HS_SDK__` itself, and every member added after the plugin template's initial release, is typed optional. This isn't only about older hosts — a plugin bundle can execute before the host's mount effect has populated the global (tests, standalone bundle previews). The UI components and `pluginFetch`/`displayCache`/`getHostSettings`/`emit` below have always been part of the SDK, so existing template code accesses them directly; treat everything under I18n, Shared State, and Auth Status as needing `?.` at the call site.
+
 ### UI Components
 
 Available in both display and editor contexts:
@@ -237,6 +245,41 @@ displayCache.set('my-key', myData);
 const cached = displayCache.get('my-key');
 ```
 
+### Internationalization
+
+The host ships 7 locales. To render translated strings, declare a `translations` map in your manifest (BCP-47 tag → dictionary file path, relative to the plugin root):
+
+```jsonc
+"translations": {
+  "en-US": "translations/en-US.json",
+  "de-DE": "translations/de-DE.json"
+}
+```
+
+Then look strings up by dotted key, prefixed with `plugin:<your-id>`:
+
+```typescript
+const locale = window.__HS_SDK__?.locale ?? 'en-US';
+const label = window.__HS_SDK__?.translate?.('plugin:my-plugin.refreshLabel', { count: 3 }) ?? 'Refresh';
+```
+
+`translate` returns the raw key on any miss, so a missing translation shows up rather than silently rendering empty. Wrap it in a small local helper that supplies an English fallback when the SDK member is absent — that's the pattern used by both the Home Assistant and Strava reference plugins (`src/i18n.ts`).
+
+`formatDate(date, pattern)` and `formatNumber(n, opts?)` are also available for locale-aware formatting, honoring the host's `formattingLocale` override.
+
+### Auth Status
+
+For plugins with a manifest `auth` adapter (see [Auth Adapters](#auth-adapters)), check connection status to conditionally render UI:
+
+```typescript
+const status = await window.__HS_SDK__?.getAuthStatus?.('my-plugin');
+if (!status?.connected) {
+  // render "Connect your account to see this" instead of live data
+}
+```
+
+`getAuthStatus` works in both display and editor contexts and never triggers the flow itself — the connect button lives in the host's Connection panel, or your `ConfigSection` can embed its own via the editor-only `startAuth('my-plugin')`.
+
 ## Secrets & Server-Side Proxy
 
 For plugins that need external API access with authentication:
@@ -263,6 +306,21 @@ Add a `secrets` array and `allowedDomains` to your manifest:
 
 Users configure secrets in the editor's property panel. The values are stored server-side and never sent to the client.
 
+**Advanced: custom secrets UI.** If your `ConfigSection` wants to collect a secret inline (e.g. next to a "Connect" button) instead of sending users to the auto-rendered panel, fetch the host's plugin-secrets endpoint directly — there's no `__HS_SDK__` wrapper for this yet:
+
+```typescript
+// GET returns which keys are configured, never the values themselves
+const res = await fetch(`/api/plugins/secrets/${encodeURIComponent('my-plugin')}`);
+const { keys } = await res.json(); // { api_key: true }
+
+// PUT writes one key
+await fetch(`/api/plugins/secrets/${encodeURIComponent('my-plugin')}`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ key: 'api_key', value: userInput }),
+});
+```
+
 ### Using the Proxy
 
 ```typescript
@@ -283,6 +341,36 @@ const data = await res.json();
 - Max response size: 5MB
 - Supported methods: GET, POST, PUT, PATCH
 - Secret `{{key}}` placeholders are resolved server-side — never exposed to the client
+
+## Auth Adapters
+
+For APIs that need more than a static key — a full OAuth2 flow, or a proprietary SSO login — declare a manifest `auth` adapter and the host runs the entire flow: authorization, token exchange, refresh, and injecting the token into your `pluginFetch` requests. Your plugin code never sees the token and never talks to the auth provider directly.
+
+Two adapter shapes:
+
+```jsonc
+// Declarative OAuth2 (authorization_code, device_code, or client_credentials)
+"auth": {
+  "type": "oauth2",
+  "flow": "authorization_code",
+  "authorizationUrl": "https://example.com/oauth/authorize",
+  "tokenUrl": "https://example.com/oauth/token",
+  "scopes": ["read"],
+  "pkce": true,
+  "tokenPlacement": "header",
+  "tokenTargetDomains": ["api.example.com"],
+  "secrets": { "clientId": "client_id", "clientSecret": "client_secret" }
+},
+"permissions": ["network", "oauth"]
+```
+
+```jsonc
+// Named proprietary adapter — no URLs or scopes, the host implements the flow
+"auth": { "type": "garmin" },
+"permissions": ["network", "oauth"]
+```
+
+`clientId`/`clientSecret` (OAuth2) still go through the regular `secrets` array — `auth.secrets` just names which declared secret keys hold them. The proxy transparently refreshes an expired token and retries once before returning a structured `auth_expired` error. See [Auth Status](#auth-status) for reading connection state from your component, and `startAuth`/the Connection panel for how users actually connect.
 
 ## Custom Config Section
 
@@ -315,6 +403,111 @@ export function ConfigSection({ config, onChange }: PluginConfigSectionProps) {
 Update manifest exports: `{ "component": "default", "configSection": "ConfigSection" }`
 
 When a custom `configSection` is exported, the host uses it **instead of** the auto-generated schema UI.
+
+## Shared State
+
+Plugins can publish named values onto a per-tab shared-state bus. Any module — built-in or plugin — can then gate its visibility on that value, or a Text module can render it inline with a `{plugin:my-plugin:key}` token. Two ways to publish, from simplest to most capable:
+
+### Publishing from a visible module
+
+Call `publishState`/`clearState` from your regular component (or from a `backgroundProvider: true` instance the user places for exactly this purpose):
+
+```typescript
+window.__HS_SDK__?.publishState?.('my-plugin', 'door_open', 'true');
+// Read back elsewhere as: plugin:my-plugin:door_open
+// (the host force-prefixes with your plugin id, lowercased)
+
+window.__HS_SDK__?.clearState?.('my-plugin', 'door_open'); // e.g. on unmount, or when no longer known
+```
+
+Advertise which keys you can publish so the editor's condition picker can offer them before anything has actually been published yet:
+
+```jsonc
+// manifest.json — static keys
+"providesState": [
+  { "key": "door_open", "label": "Front Door", "sampleValues": ["true", "false"] }
+]
+```
+
+```typescript
+// src/index.tsx — config-driven keys (conventional export, not manifest-declared)
+import type { ProvidedStateKey } from './hs-plugin';
+
+export function deriveProvidedKeys(config: Record<string, unknown>): ProvidedStateKey[] {
+  const entities = (config.entities as string[]) ?? [];
+  return entities.map((id) => ({ key: id, label: id }));
+}
+```
+
+### Publishing with `stateProvider` (no module instance required)
+
+For plugins that would otherwise need a dedicated hidden `backgroundProvider` module, export a headless `stateProvider` component instead. The host mounts exactly one instance per plugin — alive across screen rotation — and feeds it only the keys something on the display actually references:
+
+```jsonc
+// manifest.json
+"exports": { "component": "default", "stateProvider": "StateProvider" }
+```
+
+See the commented `StateProvider` example at the bottom of `src/index.tsx` and the full contract in `src/hs-plugin.d.ts` (`StateProviderProps`). Two rules matter more than the rest:
+
+- **Clear on shrink** — when a key drops out of `demandedKeys`, `clearState` it, or conditions elsewhere keep reading its last value forever.
+- **Idle when empty** — don't poll or open a connection while `demandedKeys` is empty. The provider stays mounted even with nothing demanded; only the work should pause.
+
+`stateProvider` only receives plugin-level `settings` (see below), never per-module config. If your keys depend on each module instance's own config (e.g. a per-instance entity list), keep using `backgroundProvider` + `deriveProvidedKeys` instead.
+
+### Plugin-level settings
+
+A `stateProvider` has no module instance to read config from, so give it a manifest `settingsSchema` (same shape as `configSchema`) — the plugin manager renders it once per plugin, not once per module:
+
+```jsonc
+"settingsSchema": {
+  "type": "object",
+  "properties": {
+    "apiUrl": { "type": "string", "title": "API URL", "ui:widget": "text" }
+  }
+}
+```
+
+```typescript
+const settings = window.__HS_SDK__?.getPluginSettings?.('my-plugin') ?? {};
+
+// Editor-only: let a module's ConfigSection save plugin-wide settings inline
+// (e.g. a "Connect" button) instead of sending users to the plugin manager.
+// Merge semantics — only the keys you pass change.
+await window.__HS_SDK__?.setPluginSettings?.('my-plugin', { apiUrl: 'https://...' });
+```
+
+### Friendly condition search (`searchStateKeys`)
+
+Without this, the editor's condition picker only lists keys from `providesState`/`deriveProvidedKeys`. Export `searchStateKeys` (conventional named export, like `deriveProvidedKeys` — not manifest-declared) to power a live search over everything your plugin can actually publish, in friendly terms:
+
+```typescript
+import type { SearchStateKeys } from './hs-plugin';
+
+export const searchStateKeys: SearchStateKeys = async (query, { limit, settings }) => {
+  const results = await lookupEntities(query, settings); // your own logic
+  return results.slice(0, limit).map((e) => ({
+    key: `plugin:my-plugin:${e.id}`,
+    label: e.friendlyName,
+    group: e.area,
+    valueType: 'enum',
+    valueOptions: [{ value: 'on', label: 'Open' }, { value: 'off', label: 'Closed' }],
+  }));
+};
+```
+
+Two easy-to-miss requirements: it must also resolve a **complete prefixed bus key** passed as the query (the host uses this to redisplay an already-saved condition, so match on `key` itself, not just `label`), and it must tolerate an empty query string by returning the most useful `limit` results. Throwing or timing out just degrades to the plain static picker, so cache results (short TTL) rather than hitting your upstream on every keystroke.
+
+### Reporting provider health
+
+```typescript
+window.__HS_SDK__?.reportProviderHealth?.('my-plugin', { ok: false, message: 'API unreachable since 12:04', since: Date.now() });
+window.__HS_SDK__?.reportProviderHealth?.('my-plugin', { ok: true }); // report once on recovery, not repeatedly
+```
+
+Surfaces in the editor's shared-state inspector so users see *why* gated modules went hidden instead of guessing.
+
+The bus key charset (`[a-z0-9_:.-]`) allows `:`, so a plugin with hierarchical data (e.g. a sensor's sub-attributes) can adopt its own `<id>:<sub-key>` suffix convention on top of `publishState` — this is a plugin-side pattern, not a host feature, so design it however suits your data.
 
 ## Development
 
@@ -371,14 +564,16 @@ Each key is a version — migrations are applied for versions strictly between t
 
 ## Permissions
 
-Plugins declare which capabilities they use. These are shown to users during install but not enforced at runtime:
+Plugins declare which capabilities they use. Most are shown to users during install but not enforced at runtime:
 
-| Permission | Meaning |
-|---|---|
-| `network` | Makes HTTP requests via the server-side proxy (`pluginFetch`) |
-| `secrets` | Stores API keys or credentials |
-| `events` | Emits host events (navigate, refresh, etc.) |
-| `storage` | Uses localStorage for persistent state |
+| Permission | Meaning | Enforced? |
+|---|---|---|
+| `network` | Makes HTTP requests via the server-side proxy (`pluginFetch`) | No — transparency only |
+| `secrets` | Stores API keys or credentials | No — transparency only |
+| `events` | Emits host events (navigate, refresh, etc.) | No — transparency only |
+| `storage` | Uses localStorage for persistent state | No — transparency only |
+| `oauth` | Uses a manifest `auth` adapter (see [Auth Adapters](#auth-adapters)) | No — transparency only |
+| `localNetwork` | Proxy target is expected to be on the user's LAN (e.g. a local Home Assistant instance) | **Yes** — without it, `pluginFetch` rejects URLs resolving to a private/LAN address (RFC1918, mDNS, link-local); with it, the relaxed check still blocks loopback and cloud-metadata IPs |
 
 Plugins submitted to the registry must honestly declare all capabilities — undeclared capabilities will be flagged during review.
 

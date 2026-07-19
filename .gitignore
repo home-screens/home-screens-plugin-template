@@ -2,3 +2,9 @@ node_modules/
 dist/
 .DS_Store
 *.local
+
+# Claude Code working files — plans/specs/mockups are never committed
+.c*
+!.claude/
+.claude/*
+!.claude/commands/

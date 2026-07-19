@@ -3,9 +3,16 @@
  * These globals are provided by the host app at runtime.
  *
  * The host exposes window.__HS_SDK__ with UI components, data hooks,
- * caching, event emission, host settings, and a server-side proxy.
- * Editor-only members (AccordionSection, useModuleConfig) are added
- * in the editor layout and may be undefined on the display page.
+ * caching, event emission, host settings, plugin-level settings, the
+ * shared-state bus, i18n, auth status, and a server-side proxy.
+ * Editor-only members (AccordionSection, useModuleConfig, setPluginSettings,
+ * startAuth) are added in the editor layout and may be undefined on the
+ * display page.
+ *
+ * `__HS_SDK__` itself is typed optional: a plugin bundle can execute before
+ * the host's mount effect has populated it (tests, standalone bundle
+ * previews), and members added after a plugin's `minAppVersion` may be
+ * absent on an older host. Guard every access with `?.`.
  */
 
 import type { FC, ReactNode } from 'react';
@@ -41,6 +48,12 @@ interface PluginFetchOptions {
   };
   cacheTtlMs?: number;
 }
+
+/** Health status for reportProviderHealth. `since` is the epoch ms of the
+ *  CURRENT outage's first failure — report the same `since` on every
+ *  consecutive failure, then report `{ ok: true }` exactly once on recovery
+ *  (not repeatedly). No report at all means healthy. */
+type ProviderHealthStatus = { ok: true } | { ok: false; message: string; since: number };
 
 // ─── Component Props ─────────────────────────────────────────────────────────
 
@@ -97,8 +110,9 @@ declare global {
     /** Provided by the host — do not bundle ReactDOM */
     ReactDOM: typeof import('react-dom');
 
-    /** Shared SDK from the host app */
-    __HS_SDK__: {
+    /** Shared SDK from the host app. Optional — see the file header for why
+     *  every access should be guarded with `?.`. */
+    __HS_SDK__?: {
       // ── CSS Classes ──
       /** Standard input styling for config panels */
       INPUT_CLASS: string;
@@ -133,9 +147,60 @@ declare global {
       /** Read-only snapshot of global display settings */
       getHostSettings: () => HostSettings;
 
+      // ── Plugin-Level Settings ──
+      /** Read-only snapshot of this plugin's settings (manifest `settingsSchema`
+       *  values saved in the plugin manager). Also passed as the `settings` prop
+       *  to a `stateProvider` component — this is the read path for module
+       *  instances that want to fall back to a plugin-wide value. Absent on
+       *  hosts older than the settings feature — guard with `?.`. */
+      getPluginSettings?: (pluginId: string) => Record<string, unknown>;
+
       // ── Event Emitter ──
       /** Emit events to the host (navigate, refresh, log) */
       emit: (event: PluginEvent) => void;
+
+      // ── Shared State ──
+      /** Publish a value onto the shared-state bus, for conditional module
+       *  visibility and Text-module tokens. The key is force-prefixed with
+       *  this plugin's namespace (`plugin:<id>:<key>`, id lowercased) — read
+       *  it back (in conditions, tokens, or your own code) with that full
+       *  prefix, not the bare key you passed in. Absent on hosts older than
+       *  the shared-state bus — guard with `?.`. */
+      publishState?: (pluginId: string, key: string, value: string) => void;
+      /** Clear a previously published key so conditions on it evaluate as
+       *  unknown again (subject to a short tombstone grace window). Keys are
+       *  also cleared automatically when the plugin is unregistered/reloaded.
+       *  Guard with `?.`, same as `publishState`. */
+      clearState?: (pluginId: string, key: string) => void;
+      /** Report upstream connectivity health so the editor's shared-state
+       *  inspector can explain "service unreachable" instead of a silent
+       *  hide. Guard with `?.` — absent on hosts older than provider-health
+       *  reporting. */
+      reportProviderHealth?: (pluginId: string, status: ProviderHealthStatus) => void;
+
+      // ── I18n ──
+      /** Active BCP-47 locale tag (e.g. "de-DE"). Absent on hosts older than
+       *  plugin i18n — fall back to your own default. */
+      locale?: string;
+      /** Look up a translation by dotted key: the first segment before `.`
+       *  selects the namespace, `plugin:<id>` resolves against this plugin's
+       *  manifest `translations` dictionary. Returns the raw key on any miss,
+       *  so a missing translation is visible rather than silently empty.
+       *  `vars` interpolates `{name}` placeholders; `vars.count` selects a
+       *  CLDR plural form. Guard with `?.` — wrap in a local helper that
+       *  supplies an English fallback when absent. */
+      translate?: (key: string, vars?: Record<string, string | number>) => string;
+      /** Locale-aware date formatting honoring the host's `formattingLocale`. */
+      formatDate?: (date: Date | number, pattern: string) => string;
+      /** Locale-aware number formatting (e.g. "72,5" for de-DE). */
+      formatNumber?: (n: number, opts?: Intl.NumberFormatOptions) => string;
+
+      // ── Auth Status ──
+      /** Connection status for a plugin's declared `auth` adapter (OAuth2 or
+       *  the Garmin SSO adapter) — use to show connection-dependent UI like
+       *  "Connect your account to see this." Read-only; available in both
+       *  display and editor contexts. Guard with `?.`. */
+      getAuthStatus?: (pluginId: string) => Promise<{ connected: boolean; expiresAt?: number }>;
 
       // ── Server-Side Proxy ──
       /** Fetch external APIs through the server-side proxy with optional secret injection */
@@ -149,6 +214,17 @@ declare global {
         moduleId: string,
         screenId: string,
       ) => ModuleConfigResult<T>;
+      /** Editor-only settings writer — lets a ConfigSection save plugin-level
+       *  settings inline (e.g. a "Connect" row) instead of sending users to
+       *  the plugin manager. Merge semantics: only the keys you pass change. */
+      setPluginSettings?: (
+        pluginId: string,
+        updates: Record<string, unknown>,
+      ) => Promise<{ ok: boolean; error?: string }>;
+      /** Editor-only: dispatches to the host's Connection panel to start this
+       *  plugin's declared `auth` flow, so a ConfigSection can embed its own
+       *  "Connect" button instead of pointing users at the plugin manager. */
+      startAuth?: (pluginId: string) => void;
     };
 
     /** Plugin export target — set by the IIFE wrapper, read by the host loader */

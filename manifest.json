@@ -5,7 +5,7 @@
   "description": "A simple example plugin for Home Screens",
   "author": "your-github-username",
   "license": "MIT",
-  "minAppVersion": "0.20.0",
+  "minAppVersion": "1.7.1",
   "moduleType": "example-plugin",
   "category": "Knowledge & Fun",
   "icon": "Puzzle",
