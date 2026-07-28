@@ -1,5 +1,6 @@
 import React from 'react';
 import type { PluginComponentProps } from './hs-plugin';
+import { hostFrameStyle } from './host-style';
 
 /**
  * Example Home Screens plugin component.
@@ -17,11 +18,18 @@ import type { PluginComponentProps } from './hs-plugin';
  * IMPORTANT: Use style.textColor (not style.color) for text color.
  * The host's ModuleStyle uses "textColor" — built-in modules get this
  * mapped by ModuleWrapper, but plugins receive the raw prop.
+ *
+ * IMPORTANT: size your content in `em`, not pixels. The host's Text size
+ * slider (8–72) reaches your module as `style.fontSize` on the root element,
+ * so `em` values follow it and pixel values do not. A module whose labels are
+ * `fontSize: 12` looks identical at every slider position, which reads to the
+ * user as a broken control.
  */
 export default function ExamplePlugin({ config, style }: PluginComponentProps) {
   // Read config values with sensible defaults
   const message = (config.message as string) || 'Hello from a plugin!';
-  const showBorder = config.showBorder !== false;
+  // Off by default on purpose — see the note where it's applied below.
+  const showBorder = config.showBorder === true;
   const borderColor = (config.borderColor as string) || '#3b82f6';
   const refreshIntervalMs = (config.refreshIntervalMs as number) || 60000;
   const notes = (config.notes as string) || '';
@@ -34,44 +42,40 @@ export default function ExamplePlugin({ config, style }: PluginComponentProps) {
     return () => clearInterval(id);
   }, [refreshIntervalMs]);
 
-  // Plugins must apply the full module wrapper styling themselves.
-  // Built-in modules get this from ModuleWrapper, but plugins receive
-  // the raw style prop and are responsible for rendering it.
+  // Plugins must apply the full module wrapper styling themselves — the host
+  // wraps built-in modules in ModuleWrapper but hands plugins the raw style
+  // prop. `hostFrameStyle` applies every ModuleStyle field the way the host
+  // does; spread your own layout on top of it.
   return (
     <div
       style={{
-        width: '100%',
-        height: '100%',
-        overflow: 'hidden',
+        ...hostFrameStyle(style),
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 12,
-        // Module wrapper styles — apply these on your root element
-        fontFamily: style.fontFamily,
-        fontSize: style.fontSize,
-        color: style.textColor,
-        backgroundColor: style.backgroundColor,
-        borderRadius: style.borderRadius,
-        padding: style.padding,
-        opacity: style.opacity,
-        backdropFilter: `blur(${style.backdropBlur ?? 0}px)`,
-        WebkitBackdropFilter: `blur(${style.backdropBlur ?? 0}px)`,
-        boxSizing: 'border-box',
-        // Plugin-specific styling
-        border: showBorder ? `2px solid ${borderColor}40` : 'none',
+        // `em` so the gap tracks the host's Text size along with the type.
+        gap: '0.85em',
+        // Plugin-specific styling, layered over the host frame.
+        //
+        // Note what this costs: `border` is the same property `hostFrameStyle`
+        // sets from style.borderWidth / style.borderColor, so switching this
+        // on takes the editor's Border width slider out of the picture. That
+        // is why it defaults to OFF — a plugin whose own defaults disable a
+        // style control reads to the user as a broken control. If you want
+        // both, draw your border on an inner element instead of the root.
+        ...(showBorder ? { border: `2px solid ${borderColor}40` } : {}),
       }}
     >
-      <div style={{ fontSize: style.fontSize * 1.4, fontWeight: 600 }}>
+      <div style={{ fontSize: '1.4em', fontWeight: 600 }}>
         {message}
       </div>
       {notes && (
-        <div style={{ fontSize: style.fontSize * 0.75, opacity: 0.5, textAlign: 'center' }}>
+        <div style={{ fontSize: '0.75em', opacity: 0.5, textAlign: 'center' }}>
           {notes}
         </div>
       )}
-      <div style={{ fontSize: style.fontSize * 0.8, opacity: 0.6 }}>
+      <div style={{ fontSize: '0.8em', opacity: 0.6 }}>
         Refreshes every {refreshIntervalMs / 1000}s &middot; tick #{tick}
       </div>
     </div>
@@ -101,7 +105,7 @@ export default function ExamplePlugin({ config, style }: PluginComponentProps) {
 //       </label>
 //       <Toggle
 //         label="Show Border"
-//         checked={config.showBorder !== false}
+//         checked={config.showBorder === true}
 //         onChange={(v) => onChange({ showBorder: v })}
 //       />
 //       <Slider

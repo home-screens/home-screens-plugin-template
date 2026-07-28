@@ -29,6 +29,7 @@ my-plugin/
   manifest.json       Plugin metadata, config schema, defaults
   src/
     index.tsx          Your display component (default export)
+    host-style.ts      hostFrameStyle: the host's module frame, plugin-side
     hs-sdk.d.ts        Type stubs for host globals (full SDK surface)
     hs-plugin.d.ts     Type definitions for plugin props & optional export contracts
   vite.config.ts       IIFE build configuration (classic JSX transform)
@@ -120,16 +121,20 @@ interface PluginComponentProps {
   /** Merged config: manifest defaults + user overrides */
   config: Record<string, unknown>;
 
-  /** Theme styling from the module's style settings */
+  /** Theme styling from the module's style settings.
+   *  Apply it with `hostFrameStyle` — see "Applying Module Styles" below. */
   style: {
     fontSize: number;
-    fontFamily: string;
+    fontFamily: string;       // NOTE: a font id ("inter"), not a CSS stack
     textColor: string;        // NOTE: "textColor", not "color"
     backgroundColor: string;
     borderRadius: number;
     padding: number;
     opacity: number;
     backdropBlur: number;
+    borderWidth?: number;     // optional: hosts older than these omit them
+    borderColor?: string;
+    shadowSize?: number;
   };
 
   /** IANA timezone from global settings (e.g. "America/New_York") */
@@ -154,25 +159,48 @@ interface PluginComponentProps {
 
 ### Applying Module Styles
 
-**Important:** Built-in modules are wrapped in `ModuleWrapper` which applies background, blur, radius, and padding. Plugins receive the raw `style` prop and must apply these themselves on the root element:
+**Important:** Built-in modules are wrapped in `ModuleWrapper`, which applies the whole `style` object for them. Plugins are not — you render your own root element, so every field of `style` is a control in the editor's Style panel that does nothing until you implement it.
+
+Use `hostFrameStyle` from `src/host-style.ts` and spread your layout on top. It applies all of them the way the host does:
 
 ```typescript
+import { hostFrameStyle } from './host-style';
+
 <div style={{
-  width: '100%', height: '100%', overflow: 'hidden',
-  fontFamily: style.fontFamily,
-  fontSize: style.fontSize,
-  color: style.textColor,
-  backgroundColor: style.backgroundColor,
-  borderRadius: style.borderRadius,
-  padding: style.padding,
-  opacity: style.opacity,
-  backdropFilter: `blur(${style.backdropBlur ?? 0}px)`,
-  WebkitBackdropFilter: `blur(${style.backdropBlur ?? 0}px)`,
-  boxSizing: 'border-box',
+  ...hostFrameStyle(style),
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.75em',
 }}>
   {/* your content */}
 </div>
 ```
+
+Three things it handles that a hand-written root element usually gets wrong:
+
+- **Font family.** `style.fontFamily` is a font *id* (`inter`, `dm-serif`, `jetbrains`), not a CSS stack. Applying it raw asks for a font that doesn't exist, and your module silently renders in the browser default while every built-in next to it uses the font the user picked.
+- **Opacity under backdrop blur.** Setting `opacity` on the element while `backdrop-filter` is active makes the blur invisible — an opaque background covers the blurred backdrop and Chrome renders nothing. The opacity has to be baked into the background color's alpha instead.
+- **Border and shadow.** `borderWidth`, `borderColor`, and `shadowSize` were added to the host after the first plugins shipped, so older hand-written frames omit them.
+
+Two options:
+
+```typescript
+hostFrameStyle(style, { chromeless: true })   // type and color only: no background,
+                                              // border, shadow, or blur. For modules
+                                              // that float their own tiles.
+hostFrameStyle(style, { baseFontSize: 14 })   // the font size your pixel dimensions
+                                              // were authored against; defaults to 16.
+```
+
+**Sizing is still yours.** `hostFrameStyle` puts the host's font size on your root, which only reaches content authored in `em`/`rem`. Hard-coded pixels ignore the Text size slider entirely. Where `em` won't work — two elements with different type that need to share a width — use `scalePx`, which reads a `--u` scale variable the frame publishes:
+
+```typescript
+import { scalePx } from './host-style';
+
+<div style={{ width: scalePx(120) }}>   // calc(120px * var(--u, 1))
+```
+
+Do not overwrite a frame property in the object you spread on top. Setting `border` on the root, for example, replaces the one `hostFrameStyle` derived from `style.borderWidth`, which takes the Style panel's Border width slider out of the picture. Draw your own on an inner element instead.
 
 ## SDK Reference
 
@@ -386,7 +414,7 @@ export function ConfigSection({ config, onChange }: PluginConfigSectionProps) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <Toggle
         label="Show Border"
-        checked={config.showBorder !== false}
+        checked={config.showBorder === true}
         onChange={(v) => onChange({ showBorder: v })}
       />
       <Slider
@@ -624,7 +652,8 @@ Unknown icon names fall back to `Puzzle`.
 
 - **Do not bundle React.** The host provides `window.React` and `window.ReactDOM`. The Vite config marks them as external.
 - **Use the classic JSX transform.** The Vite config uses `React.createElement`, not `jsx`/`jsxs`. Do not change this.
-- **Apply module wrapper styles.** Plugins must apply `backgroundColor`, `backdropFilter`, `borderRadius`, `padding`, and `opacity` from the `style` prop on their root element. See the example in `src/index.tsx`.
+- **Apply the module frame.** Spread `hostFrameStyle(style)` from `src/host-style.ts` on your root element. Every field of `style` you don't apply is a Style panel control that silently does nothing for the user, and font family, opacity-under-blur, border, and shadow are all easy to get wrong by hand. See "Applying Module Styles" above.
+- **Size in `em`, not pixels.** The Text size slider reaches you as `style.fontSize` on the root, so `em` follows it and pixels do not. Use `scalePx(n)` where `em` won't work.
 - **Use `style.textColor`, not `style.color`.** The host's `ModuleStyle` uses `textColor`.
 - **Keep bundles small.** Plugins load at runtime on a Raspberry Pi. Avoid heavy dependencies.
 - **Use inline styles.** Plugins cannot inject stylesheets. The `style` prop gives you theme values.

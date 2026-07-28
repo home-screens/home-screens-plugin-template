@@ -12,7 +12,7 @@
 
   "defaultConfig": {
     "message": "Hello from a plugin!",
-    "showBorder": true,
+    "showBorder": false,
     "borderColor": "#3b82f6",
     "refreshIntervalMs": 60000,
     "notes": ""
